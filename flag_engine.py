@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from pattern_geometry_helpers import find_pivots, linreg, slope_pct_per_day
+from pattern_geometry_helpers import detect_pole, find_pivots, linreg, slope_pct_per_day
 
 # GUI name: "Pattern Detection" (Flag family). Canonical scheduled-job names live in
 # scheduler_manifest.JOB_GRAPH; the registry contract lives in pattern_detection_engine.py.
@@ -58,35 +57,17 @@ def _detect_and_build(
     index-keyed result dict, or None if no valid candidate exists as of that bar."""
     n = len(close)
     today_idx = n - 1
-    daily_returns = np.diff(close) / close[:-1]
 
     for consolidation_days in range(max_consolidation_days, min_consolidation_days - 1, -1):
         consolidation_start = today_idx - consolidation_days + 1
-        pole_end = consolidation_start - 1
-        pole_start = pole_end - flagpole_days + 1
-        if pole_start - sigma_window_days < 0 or pole_end <= pole_start:
+        pole = detect_pole(close, consolidation_start, is_bear, sigma_multiplier, flagpole_days, sigma_window_days)
+        if pole is None:
             continue
-
-        pole_start_price = close[pole_start]
-        pole_end_price = close[pole_end]
-        if pole_start_price <= 0:
-            continue
-        flagpole_return_pct = (pole_end_price - pole_start_price) / pole_start_price * 100.0
-
-        sigma_window = daily_returns[pole_start - sigma_window_days:pole_start]
-        if len(sigma_window) < sigma_window_days:
-            continue
-        sigma_daily = float(np.std(sigma_window, ddof=1))
-        if sigma_daily <= 0:
-            continue
-        threshold_pct = sigma_multiplier * sigma_daily * math.sqrt(flagpole_days) * 100.0
-
-        if is_bear:
-            if flagpole_return_pct > -threshold_pct:
-                continue
-        else:
-            if flagpole_return_pct < threshold_pct:
-                continue
+        pole_start = pole["pole_start_idx"]
+        pole_end = pole["pole_end_idx"]
+        pole_start_price = pole["pole_start_price"]
+        pole_end_price = pole["pole_end_price"]
+        flagpole_return_pct = pole["flagpole_return_pct"]
 
         consolidation_close = close[consolidation_start:today_idx + 1]
         top_local, bottom_local = find_pivots(consolidation_close, _ORDER)
